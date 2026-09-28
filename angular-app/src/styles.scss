@@ -44,6 +44,28 @@ h2 {
   font-size: 1.125rem;
 }
 
+/* Short write-up under a page heading, for questions that ask for an explanation. */
+.explainer {
+  max-width: 78ch;
+  margin: -0.75rem 0 1.75rem;
+  color: var(--text-muted);
+
+  p,
+  ul {
+    margin: 0 0 0.75rem;
+  }
+
+  ul {
+    padding-left: 1.25rem;
+    display: grid;
+    gap: 0.375rem;
+  }
+
+  > :last-child {
+    margin-bottom: 0;
+  }
+}
+
 .card {
   background: var(--surface);
   border: 1px solid var(--border);

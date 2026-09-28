@@ -1,4 +1,12 @@
 <h1>RxJS Autocomplete</h1>
+<div class="explainer">
+  <p>
+    The box waits until you've stopped typing for 300 ms before searching (<code>debounceTime</code>), and a new search
+    cancels the previous request (<code>switchMap</code>). Results are cached per term (<code>shareReplay</code>), so
+    searching the same thing again doesn't call the server, and failed requests are retried twice (<code>retry</code>).
+    Use the sliders to slow the network down or make requests fail, and watch what happens in the log.
+  </p>
+</div>
 <div class="layout">
   <section class="card">
     <h2>Search countries</h2>
