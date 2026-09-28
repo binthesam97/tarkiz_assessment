@@ -1,310 +1,282 @@
 # E-commerce App Architecture (React Native Q5)
 
-Modules: **Authentication · Product Catalog · Cart · Checkout · Payments · Notifications**
+The question asks for an architecture covering authentication, product catalog, cart, checkout,
+payments and notifications, and for an explanation of why it was chosen and how it scales to a
+million users. This document is the answer. To make it less abstract, I also built the client side as
+a small working store (`src/features/shop`), backed by a few storefront endpoints in the mock backend
+(`mock-backend/src/http/routes/shop.routes.ts`). Open **E-commerce Store** in the app, add something
+to the cart and check out as the demo employee. There are test cards for an approved payment, a
+decline and insufficient funds.
 
-The answer has two parts:
+## Why this architecture
 
-1. **This design**: the architecture, why it was chosen, and how it scales to one million users.
-2. **A working reference store** that implements the client side of it, in `src/features/shop`, backed
-   by the storefront endpoints in `mock-backend/src/http/routes/shop.routes.ts`. In the app, open
-   **E-commerce Store**, add something to the cart and check out as the demo
-   employee. The test cards cover approval, a decline and insufficient funds.
+A million users is big enough that the design has to scale, but small enough that a giant
+microservice estate would slow the team down more than it helps. So rather than start from a
+technology list, I started from a few decisions about how the system should behave, and let the
+structure follow from those.
 
----
+**Services owned by teams, talking only through APIs.** I want each team to be able to ship without
+coordinating with the others, and to run what it builds. On the backend I split things by domain:
+identity, catalogue, cart, pricing, orders, payments and notifications, each owning its own data. The
+app mirrors that. Every domain is a feature module with a single public `index.ts`, so the team that
+owns the order service can also own `features/shop/orders` without stepping on anyone.
 
-## 1. Modelled on how Amazon builds commerce
+**The cart is always writeable.** Refusing an "add to cart" loses a sale, while a cart that is a few
+seconds stale costs nothing, so availability matters more than consistency here. In the app the cart
+lives on the device. Adding an item always succeeds instantly, even offline, and the cart survives
+restarts. The flip side is that nothing in it is trusted. Prices and stock are always re-checked by
+the server when the cart is quoted.
 
-Amazon has published a good deal about how its retail platform is built. The design borrows the
-principles that matter at this scale and deliberately leaves out the machinery that only pays off at
-Amazon's scale.
+**Strict consistency where money is involved.** The server calculates every total. The client never
+sends an amount; the payment intent is created for the server's figure, and the order service
+re-prices the cart and checks it against the payment before accepting the order.
 
-| Amazon practice | What it solves | Where it shows up here |
-| --- | --- | --- |
-| **Services owned by small teams, reachable only through APIs.** "You build it, you run it" (Werner Vogels, ACM Queue, 2006). | Teams ship independently; one area's change cannot break another's internals. | Backend: one service per domain (catalogue, cart, pricing, order, payment, notification), each owning its data. App: one **feature module per domain**, with a public `index.ts`, so ownership lines up with a service and a team. |
-| **The shopping cart is "always writeable"** (the Dynamo paper, SOSP 2007). Rejecting "add to cart" loses a sale; a briefly stale cart does not. | Availability where it earns money. | The cart is owned by the device: adding always succeeds instantly, even offline, and it is persisted. The server re-prices it; client prices are never trusted. |
-| **Strong consistency where money moves.** | No overcharging, no double charging. | The server calculates every total. The payment amount comes from the server, and the order service checks it against a fresh quote before accepting the order. |
-| **Timeouts, retries and back-off with jitter** (Builders' Library). | Transient faults are common; synchronised retries turn a blip into an outage. | One HTTP client with timeouts. Reads retry transient failures (network, 429, 5xx) with *full-jitter* exponential back-off (`core/api/retry.ts`, `core/api/base-query.ts`). |
-| **Making retries safe with idempotent APIs** (Builders' Library). | A retried "place order" must not create two orders. | Each checkout carries one `Idempotency-Key`. A replay returns the original order. After a timeout the client asks the server by key before reporting failure. A retry reuses the already-authorised payment (`checkout-session.ts`). |
-| **Pages composed from many independent services.** | One slow widget should not break the page. | Critical paths (price, add to cart, pay) are separate from optional ones. "More in this category" and the category chips simply hide if their request fails. A per-route error boundary contains crashes. |
-| **Load shedding and throttling** (Builders' Library). | Under overload, reject early rather than time out slowly. | The client treats 429 like any other transient error: it backs off, then retries. Rate limits sit at the gateway. |
-| **Event-driven work behind the order.** | Checkout stays fast; downstream work scales on its own. | The order service publishes `OrderPlaced`, and notification, email, inventory and analytics consume it. In the app, checkout emits `orderPlaced` and the cart clears itself: modules react to events instead of calling each other. |
-| **Cells and shuffle-sharding** (AWS whitepaper and Builders' Library). | Limit how many customers a single failure can affect. | Not needed at one million users. It is the next step at 10× (see §6). |
+**Retries that don't make things worse.** Every request has a timeout, and only reads are retried
+automatically, with randomised exponential back-off so that thousands of phones don't all retry at
+the same moment after an outage. Writes are only retried when repeating them is safe. Placing an
+order carries an `Idempotency-Key` generated once per checkout, so sending it twice returns the same
+order instead of creating a second one.
 
-**Why not copy Amazon exactly?** Amazon runs very many services for hundreds of millions of customers.
-At one million users that overhead would slow the team down. The design keeps Amazon's *boundaries*
-and *failure-handling rules*, with **six services instead of hundreds**. Because the boundaries are
-already right, any one service can later be split further without touching the app.
+**Optional parts of a page are allowed to fail.** A product page draws on several services, and a
+slow recommendations service shouldn't break "Add to cart". In the store, the "More in this
+category" row and the category chips simply disappear if their request fails. Each screen
+also has its own error boundary, so a crash in one screen doesn't take the app down.
 
-## 2. System overview
+**Events instead of direct calls.** When an order is placed, the order service publishes an
+`OrderPlaced` event, and the notification, email, inventory and analytics services each pick it up.
+Checkout stays fast, and each consumer can scale or fail on its own. The app follows the same idea on
+a small scale: checkout dispatches `orderPlaced`, and the cart clears itself in response.
+
+What I deliberately left out is the machinery that only pays off at a much larger size: hundreds of
+services, cell-based deployments, multi-region active-active. Seven services with the right
+boundaries is plenty for a million users, and because the boundaries are right, any one of them can
+be split later without touching the app.
+
+## The system
 
 ```
-                       ┌──────────────────────── CDN (CloudFront) ───────────────────────┐
-  React Native app ───►│ images in several sizes · cacheable catalogue responses (short TTL) │
-   (iOS / Android)     └────────────────────────────────┬─────────────────────────────────┘
-                                                        ▼
-                         API gateway / BFF — auth (JWT), rate limits, request IDs,
-                         one aggregated call per screen
-        ┌─────────────┬──────────────┬──────────────┬───────────────┬───────────────┐
-        ▼             ▼              ▼              ▼               ▼               ▼
-    Identity      Catalogue        Cart          Pricing       Checkout /       Payment
-   (OIDC, MFA)  + search index  (DynamoDB,     (tax, promos,    Order          (provider
-                (OpenSearch)    per customer)   shipping)     (Aurora/Postgres) adapter +
-                + Redis cache                                        │          webhooks)
-                                                                     ▼
-                              Event bus (SNS/SQS or EventBridge): OrderPlaced, PaymentCaptured…
-                                         │              │              │
-                                         ▼              ▼              ▼
-                                   Notification      Inventory      Email / analytics
-                                   (FCM / APNs,
-                                    WebSocket)
+ React Native app
+        │
+        ▼
+ CDN (CloudFront) ── images in several sizes, cacheable catalogue responses
+        │
+        ▼
+ API gateway / BFF ── JWT auth, rate limits, request IDs, one call per screen
+        │
+        ├── Identity           OIDC, refresh tokens
+        ├── Catalogue          OpenSearch for search, Redis for hot products
+        ├── Cart               DynamoDB, keyed by customer
+        ├── Pricing            tax, shipping, promotions
+        ├── Checkout / Order   Aurora Postgres
+        ├── Payment            provider SDK + webhooks
+        └── Notification       FCM / APNs push, WebSocket while the app is open
+                 ▲
+                 └── event bus (SNS/SQS or EventBridge): OrderPlaced, PaymentCaptured, ...
+                     also consumed by inventory, email and analytics
 ```
 
-- **The app only ever talks to the gateway.** Services can be split, merged or moved without an app
-  release.
-- **Each service owns its data store**, chosen for its access pattern:
-  - **Cart:** a key-value store keyed by customer.
-  - **Orders:** relational, needing transactions.
-  - **Catalogue:** a search index plus a cache.
-- **The payment provider holds card data**, which keeps us in the lightest PCI DSS scope (SAQ-A).
-  Payment results are confirmed by provider webhooks, never only by the app's callback.
+The app only ever talks to the gateway. That one rule is what lets the backend change shape without
+an app release. Each service picks the store that suits its access pattern: carts are simple lookups
+by customer, orders need transactions, and the catalogue is mostly search and cached reads.
 
-## 3. Mobile app architecture
+Card details never touch our code or servers. The payment provider's SDK collects them, which keeps
+us in the lightest PCI DSS scope (SAQ-A). The payment result is confirmed by the provider's webhook,
+never only by the app's callback.
 
-### Layers and folders
+## The mobile app
+
+### Folder structure
 
 ```
 src/
-├── app/                          # Expo Router routes only: thin files that render feature screens
-│   └── shop/                     # catalogue, product/[id], cart, checkout (modal), orders
-├── core/                         # infrastructure with no business logic
-│   ├── api/                      # http-client (timeouts, typed ApiError), base-query (RTK Query adapter),
-│   │                             # retry (jittered back-off), error-message (one copy for every failure)
-│   ├── notifications/            # local notifications, deep links from notification taps
-│   ├── store/                    # store, typed hooks, listener middleware (cross-module effects)
-│   ├── network/  db/  hooks/     # connectivity, SQLite, shared hooks
-│   └── ui/                       # design system and the per-route error boundary
+├── app/                   Expo Router routes; thin files that render feature screens
+├── core/                  shared infrastructure with no business logic
+│   ├── api/               HTTP client, RTK Query base query, retry, error messages
+│   ├── notifications/     local notifications and deep links
+│   ├── store/             Redux store, typed hooks, listener middleware
+│   └── ui/                design system, error boundary, keyboard handling
 └── features/
-    ├── auth/                     # session, secure token storage, shared sign-in screen
+    ├── auth/              session, secure token storage, sign-in screen
     └── shop/
-        ├── index.ts              # the only import surface for routes and the store
-        ├── shop-events.ts        # domain events shared by the modules (orderPlaced)
-        ├── api/                  # RTK Query endpoints + contracts
-        ├── catalog/              # list, search, categories, product page
-        ├── cart/                 # slice, selectors, persistence, cart screen
-        ├── checkout/             # state machine, checkout session, screens
-        ├── payments/             # PaymentGateway interface + provider adapter
-        ├── orders/               # order history and detail
-        └── notifications/        # order events → cache refresh + local notification
+        ├── index.ts       the only thing routes and the store import
+        ├── api/           endpoints and contracts
+        ├── catalog/       product list, search, product page
+        ├── cart/          cart state, persistence, cart screen
+        ├── checkout/      state machine, checkout session, screens
+        ├── payments/      PaymentGateway interface and the provider adapter
+        ├── orders/        order history and detail
+        └── notifications/ order events
 ```
 
-**Rules**
-
-- `core` never imports from `features`.
-- Features import other modules only through their `index.ts`. At team scale this is enforced with
-  `eslint-plugin-boundaries`, and `CODEOWNERS` gives each folder an owning team.
-- Modules coordinate through **events**, not direct calls. Checkout dispatches `orderPlaced`; the cart
-  and order history react to it.
+The rules are simple. `core` never imports from `features`, and one feature only imports another
+through its `index.ts`. With several teams I'd enforce that with `eslint-plugin-boundaries` and give
+each folder an owner in `CODEOWNERS`. I chose feature folders over the usual
+`components/screens/reducers` split because that split is fine at ten screens and painful at a
+hundred: every change touches every folder.
 
 ### API layer
 
+Screens never call `fetch`. They use RTK Query hooks, which go through a shared base query, which
+uses one HTTP client:
+
 ```
-Screen ─► RTK Query hook ─► baseQuery (retry reads with jitter) ─► httpClient ─► API gateway
-              │                                                        │
-              └─ cache: TTL per endpoint, tags, refetch on reconnect  └─ timeout · bearer token · ApiError
+screen → RTK Query hook → base query (retries reads) → HTTP client (timeout, token, ApiError) → gateway
 ```
 
-- **Caching:**
-  - the catalogue is cached for 10 minutes;
-  - quotes are never cached;
-  - orders are refreshed through tags and by order events.
-- **Retries:** reads are retried automatically. Writes are **never** retried blindly. The one write
-  path that must survive failures (placing an order) retries explicitly, under an idempotency key.
-- **Contracts:** in production the types are generated from the backend's OpenAPI spec, so an API
-  change breaks the build rather than the app.
+RTK Query handles caching and de-duplication. Catalogue data is cached for ten minutes, quotes are
+never cached, and orders refresh when an order event arrives. Every failure comes back as a single
+`ApiError` type with an `isTransient` flag, which is what decides whether a retry makes sense. In a
+real project I'd generate the request and response types from the backend's OpenAPI spec, so an API
+change breaks the build instead of the app.
 
-### State management
+### State
 
-| Kind of state | Where it lives | Example |
-| --- | --- | --- |
-| Server state | RTK Query cache | products, quotes, orders |
-| Client domain state | Redux slice, persisted | cart |
-| Session | Redux + SecureStore (Keychain / Keystore) | tokens, user |
-| Flow state | Explicit state machine | checkout steps |
-| Ephemeral UI | Component state | form fields, selected card |
+I split state by where it comes from:
 
-- **Checkout is a state machine:** `address → shipping → payment → confirming → done | failed`. Illegal
-  transitions are ignored, so a second tap on "Pay" or a back gesture mid-payment does nothing. It is
-  a pure function with unit tests (`checkout/state/__tests__`).
-- **Selectors are memoised** (`createSelector`), and components select the smallest slice they need.
+- **Server data** (products, quotes, orders) lives in the RTK Query cache. It's never copied into
+  Redux slices, so there's only one version of it.
+- **The cart** is a Redux slice, persisted to device storage, because the device owns it.
+- **The session** is in Redux, with the tokens themselves in SecureStore (Keychain / Keystore).
+- **Checkout** is a state machine: address → shipping → payment → confirming → done or failed. Any
+  event that isn't valid for the current step is ignored, which quietly handles things like a double
+  tap on "Pay". It's a pure function, so it has proper unit tests.
+- **Everything else** (form fields, the selected card) stays in component state.
 
-### Error handling
+### When things go wrong
 
-| Failure | Behaviour |
+Most of the error handling is about not lying to the user and not charging them twice.
+
+If a read fails because the phone is offline, cached data stays on screen with an offline banner, and
+the request retries in the background before offering a "Retry" button. If an item goes out of stock
+or its price changes, the quote comes back with a specific message and checkout stays disabled until
+the cart is fixed. A declined card takes you back to the payment step with the provider's reason, and
+the same payment intent is reused for the next attempt.
+
+The case I was most careful with is a timeout after the payment has gone through. The client doesn't
+assume failure. It asks the server whether an order exists for that idempotency key. Only if there's
+no order does it show an error, and even then it tells the user that retrying won't charge them
+again, because the retry reuses both the key and the authorised payment.
+
+All of this goes through one function (`describeError`) that turns errors into user-facing text, so
+the same problem is always described the same way. In production I'd add Sentry, with Redux
+breadcrumbs scrubbed of personal data, and use its crash-free rate to gate staged rollouts.
+
+## Notes on each module
+
+**Authentication.** OIDC with PKCE: a short-lived access token and a rotating refresh token kept in
+SecureStore. When a request gets a 401, a single refresh runs while other requests wait for it.
+Browsing and the cart work signed out, and checkout asks you to sign in without losing the cart.
+
+**Product catalog.** A cursor-paginated search API with virtualised lists and memoised rows (the same
+techniques as the 50,000-product question). Images come from a CDN in the size the screen needs,
+through `expo-image` with a disk cache.
+
+**Cart.** Stored on the device and always writeable. Once a user signs in, the device cart should
+merge into their server cart: take the union of items, add up quantities and cap at stock. The demo
+keeps the cart on the device only, and I've left server-side merging out of it.
+
+**Checkout.** The server works out tax, shipping and promotions; the app displays whatever it's given
+and follows the state machine.
+
+**Payments.** Three steps. The server creates a payment intent for the amount it calculated. The
+provider's SDK confirms it (Stripe or Razorpay, with Apple Pay and Google Pay). Then the order is
+placed under the idempotency key. The app talks to the provider through a small `PaymentGateway`
+interface, so switching providers only touches `payments/`.
+
+**Notifications.** The order service publishes events. While the app is open they arrive over a
+WebSocket, refresh the order data and show a local notification. When the app is closed the same
+events go out as FCM / APNs push. Every notification carries an in-app link, so tapping it opens the
+order.
+
+## Checkout, step by step
+
+```
+App                          Our services                                Payment provider
+ │ POST /shop/quote ───────► Pricing: check stock, work out totals
+ │ ◄─────────────────────── quote
+ │ POST /shop/payment-intents ► Payment: intent for the server's total ──► create intent
+ │ confirm(intent, card) ──────────────────────────────────────────────► authorise
+ │ ◄────────────────────────────────────────────────────────── succeeded / declined
+ │ POST /shop/orders (Idempotency-Key) ► Order: re-price, check payment, create order
+ │ ◄─────────────────────── order                    │
+ │                                                    └─► event bus: OrderPlaced
+ │ ◄── WebSocket / push "Order confirmed" ◄── Notification
+```
+
+## Scaling to a million users
+
+First, some rough numbers. A million monthly users usually means somewhere between 100k and 200k
+people on a given day. If each of them makes around 50 API calls, that's roughly 100 requests a
+second on average and maybe 1,000 at the evening peak. A big sale can push that to around 10,000 a
+second for a few hours. At a 2–3% conversion rate, orders only reach a few per second even at peak.
+
+The important observation is that about 90% of that traffic is people browsing the catalogue, and
+catalogue reads are easy to cache. So the problem is mostly serving reads cheaply, plus making sure
+checkout survives a sale-day spike.
+
+**Start with the app itself.** The cheapest request is the one never made. The catalogue is cached
+with TTLs and ETags, lists are paginated, search is debounced and superseded requests are cancelled.
+Images are requested at the size the screen needs, which is the single biggest bandwidth saving.
+Retries and WebSocket reconnects use jittered back-off, so when the backend restarts, a million
+phones don't reconnect in the same second. Remote feature flags let us switch off expensive features
+like recommendations during a spike, and EAS Update lets us ship JavaScript fixes over the air with a
+staged rollout (1% → 10% → 100%).
+
+**Then the edge.** The CDN serves images and most catalogue responses, so the majority of reads
+never reach our servers. The gateway rate-limits per user and per device, and when a client goes over
+the limit it gets a 429 straight away rather than a slow timeout.
+
+**The services** are stateless and scale horizontally behind load balancers (ECS or EKS, autoscaling
+on CPU and request count). Because they're separate, they scale separately: the catalogue grows with
+browsing traffic, while orders and payments only need to scale for sale days. Every call to another
+service has a timeout and a circuit breaker, especially calls to the payment provider. Critical and
+optional traffic are kept apart, so a struggling recommendations service can't slow down checkout.
+
+**Data.** The catalogue lives in OpenSearch, with Redis in front for hot products. Carts go in
+DynamoDB keyed by customer, which gives single-digit-millisecond reads and writes at any volume and
+fits the always-writeable model. Orders go in Aurora Postgres with read replicas for reporting, and
+can be partitioned by date once the table gets large. Sessions and rate-limit counters live in Redis.
+
+**Anything that doesn't need to happen during checkout goes through a queue**: confirmation emails,
+push fan-out, inventory updates and analytics. On a sale day that turns a spike into a backlog that
+drains over a few minutes, rather than an outage. Queues deliver at least once, so every consumer is
+idempotent.
+
+**Operations.** Each request carries an ID from the app through every service, so one slow checkout
+can be traced end to end. Each endpoint gets rate, error and duration metrics, with SLOs such as
+99.9% checkout availability and p95 latency under 300 ms. I'd run a load test before every major
+sale, and everything runs across multiple availability zones.
+
+**Past a million users**, the next step would be a cell-based architecture: several identical
+copies of the stack, each serving a slice of customers, so a bad deployment affects one cell rather
+than everyone. Shuffle-sharding narrows that further, and multi-region comes after that. None of it
+is needed yet, but the service boundaries and idempotent APIs above are what make it possible later.
+
+## Quality and delivery
+
+TypeScript in strict mode, ESLint with the module-boundary rules, and Prettier. Pure logic such as
+the checkout state machine, the OTP input and the sync engines gets unit tests. Components get React
+Native Testing Library tests, and the main purchase flow (sign in, add to cart, check out) gets a
+Maestro or Detox end-to-end test on every pull request. CI runs typecheck, lint and unit tests, then
+builds an EAS preview, runs the end-to-end tests and publishes to a preview update channel. Tagging a
+release promotes the build to the stores. For accessibility, every control has a label and role,
+touch targets are at least 44 pt, text respects dynamic type, and QA includes screen-reader checks.
+
+## Where to find things in the code
+
+| What | Where |
 | --- | --- |
-| Offline / timeout on a read | Cached data is shown with an offline banner. The request retries with back-off, then offers "Retry". |
-| Out of stock or price changed | The server quote rejects the cart with a specific message, and checkout is disabled until the cart is fixed. |
-| Card declined | Checkout returns to the payment step with the provider's reason. The same payment intent is reused. |
-| Timeout **after** payment | The client looks the order up by idempotency key. It only reports failure when the order does not exist, and says a retry will not charge twice. |
-| Crash in one screen | The route's error boundary shows "Try again"; the rest of the app keeps working. |
-| Everything else | One mapping (`describeError`) turns the error into consistent user-facing text. |
-
-In production, Sentry receives crashes and errors, with Redux breadcrumbs scrubbed of personal data.
-Its release-health figures gate staged rollouts.
-
-## 4. Module notes
-
-- **Authentication:** OIDC with PKCE, a short-lived access token and a rotating refresh token in
-  SecureStore. A single in-flight refresh handles 401s. Browsing and the cart work signed out; checkout
-  and orders ask for sign-in and keep the cart.
-- **Product Catalog:**
-  - a search index behind a cursor-paginated API;
-  - virtualised lists with memoised rows, as in the 50,000-product challenge;
-  - images from a CDN in several sizes (`expo-image` with a disk cache).
-- **Cart:** adding is instant and works offline; the cart is persisted on the device. On sign-in the
-  device cart merges into the server cart the way Dynamo reconciles carts: take the union, sum the
-  quantities, cap at stock.
-- **Checkout:** the server calculates totals (tax, shipping, promotions). The client only renders them
-  and follows the state machine above.
-- **Payments:** the checkout session flow is:
-  1. The server creates a payment intent for the amount it calculated.
-  2. The provider's SDK (Stripe or Razorpay, with Apple Pay / Google Pay) confirms it. Card data never
-     touches our code.
-  3. The order is placed under an idempotency key.
-
-  `PaymentGateway` is the seam, so changing providers only touches `payments/`.
-- **Notifications:**
-  - The order service publishes events.
-  - While the app is open they arrive over a WebSocket, refresh the order cache and show a local
-    notification.
-  - When the app is closed the same events are delivered as FCM / APNs push.
-  - Each notification carries an in-app `link` that opens the order when tapped.
-
-## 5. Checkout, step by step
-
-```
-App                         Gateway / services                       Payment provider
- │ POST /shop/quote ─────────► Pricing: validate stock, compute totals
- │ ◄──────────────────────── quote (total)
- │ POST /shop/payment-intents► Payment: intent for the SERVER's total ─► create intent
- │ confirm(intent, method) ────────────────────────────────────────────► authorise
- │ ◄───────────────────────────────────────────────────────────────── SUCCEEDED | DECLINED
- │ POST /shop/orders  (Idempotency-Key) ► Order: re-price, verify intent, create order
- │ ◄──────────────────────── order                       │
- │                                                        └─► event bus: OrderPlaced
- │ ◄─ WebSocket / push "Order confirmed" ◄── Notification ◄──┘
-```
-
-## 6. Scaling to 1 million users
-
-### Sizing
-
-| Metric | Estimate | Reasoning |
-| --- | --- | --- |
-| Daily active users | 100k–200k | 10–20% of 1M monthly users |
-| Average load | ~100 requests/s | ~50 API calls per active user per day |
-| Normal peak | ~1,000 requests/s | 5–10× the average in evening peaks |
-| Sale-day peak | ~10,000 requests/s | about 10× a normal peak for a few hours |
-| Orders | a few per second at peak | 2–3% conversion |
-
-About **90% of traffic is catalogue reads**, which are cacheable. The problem is therefore mostly
-serving reads cheaply, plus absorbing checkout spikes safely.
-
-### Client: generate less load
-
-- Catalogue responses are cached (TTL + `ETag`), so revisits cost nothing.
-- Pagination instead of large lists. Search requests are debounced and cancelled when superseded.
-- Images come from a CDN in the size the screen needs. This is the biggest bandwidth lever.
-- Retries use jittered back-off, and WebSocket reconnects use back-off, so a backend restart does not
-  bring every client back at the same instant.
-- **Remote config and feature flags** switch off expensive features (recommendations, live
-  inventory) under load.
-- **EAS Update** ships JavaScript fixes over the air with staged rollouts (1% → 10% → 100%).
-
-### Edge and gateway
-
-- The CDN serves images and cacheable catalogue responses, so most reads never reach a server.
-- The gateway enforces per-user and per-device rate limits. Over the limit it returns 429 early,
-  rather than letting requests queue and time out.
-
-### Services
-
-- Services are **stateless** and scale horizontally behind load balancers (ECS/EKS with autoscaling
-  on CPU and request count).
-- Each service scales separately: catalogue for browsing traffic, order and payment for sale days.
-- **Timeouts and circuit breakers** sit on every dependency, especially the payment provider.
-- **Bulkheads** separate critical traffic from optional traffic: recommendations can fail without
-  affecting checkout.
-
-### Data
-
-| Store | Technology | Why |
-| --- | --- | --- |
-| Catalogue | OpenSearch for search, plus a Redis cache for hot products | Reads dominate and are cacheable |
-| Cart | DynamoDB keyed by customer | Single-digit-millisecond reads and writes at any scale, always writeable |
-| Orders | Aurora/Postgres with read replicas | Transactions and reporting; partition by date as volume grows |
-| Sessions, rate limits | Redis | Fast, short-lived data |
-
-### Asynchronous work
-
-- Everything that need not happen during checkout goes through queues: emails, push fan-out,
-  inventory sync and analytics.
-- A sale-day spike becomes a queue that drains, not an outage.
-- Consumers are idempotent, since queues deliver at least once.
-
-### Operations
-
-- Tracing from the app's request ID through every service.
-- RED metrics (rate, errors, duration) per endpoint.
-- SLOs (for example 99.9% checkout availability, p95 under 300 ms) with alerting.
-- Load tests before every major sale.
-- Multi-AZ deployment everywhere.
-
-### Beyond one million
-
-At 10× the load, move to Amazon's **cell-based architecture**:
-- **Cells:** several identical copies of the stack, each serving a slice of customers, so a bad
-  deployment or failure affects one cell rather than everyone.
-- **Shuffle-sharding** further limits how many customers any one failure can reach.
-- **Multi-region** comes next. The service boundaries and idempotent APIs above are what make this
-  step possible without rewriting the app.
-
-## 7. Quality and delivery
-
-- TypeScript strict, ESLint with module-boundary rules, Prettier.
-- **Tests:**
-  - unit tests for pure logic (the checkout state machine, the OTP logic, the sync engines);
-  - React Native Testing Library for components;
-  - Maestro or Detox end-to-end tests for sign-in → add to cart → checkout on every pull request.
-- **CI:** typecheck → lint → unit tests → EAS preview build → E2E → EAS Update to the preview
-  channel. Tagging a release promotes the build to the stores.
-- **Accessibility:** labels and roles on every control, 44 pt touch targets, dynamic type, and
-  screen-reader checks in QA.
-
-## 8. Where to find it in the code
-
-| Concern | File |
-| --- | --- |
-| Feature public API | `src/features/shop/index.ts` |
-| HTTP client, typed errors | `src/core/api/http-client.ts` |
-| Jittered retries | `src/core/api/retry.ts`, `src/core/api/base-query.ts` |
-| Error copy | `src/core/api/error-message.ts` |
-| Server state and caching | `src/features/shop/api/shop-api.ts` |
-| Always-writeable, persisted cart | `src/features/shop/cart/state/cart-slice.ts`, `cart-storage.ts`, `src/core/store/listener-middleware.ts` |
-| Checkout state machine and tests | `src/features/shop/checkout/state/checkout-machine.ts`, `__tests__/` |
+| The shop feature's public API | `src/features/shop/index.ts` |
+| HTTP client and `ApiError` | `src/core/api/http-client.ts` |
+| Retries with jittered back-off | `src/core/api/retry.ts`, `src/core/api/base-query.ts` |
+| User-facing error messages | `src/core/api/error-message.ts` |
+| Endpoints and caching | `src/features/shop/api/shop-api.ts` |
+| Persisted, always-writeable cart | `src/features/shop/cart/state/`, `src/core/store/listener-middleware.ts` |
+| Checkout state machine and its tests | `src/features/shop/checkout/state/checkout-machine.ts`, `__tests__/` |
 | Idempotent order placement | `src/features/shop/checkout/state/checkout-session.ts` |
-| Payment provider seam | `src/features/shop/payments/payment-gateway.ts` |
-| Order events and deep links | `src/features/shop/notifications/use-order-updates.ts`, `src/core/notifications/` |
-| Graceful degradation | `RelatedProducts` in `src/features/shop/catalog/screens/product-screen.tsx` |
-| Per-route error boundary | `src/core/ui/route-error.tsx` |
-| Server side: pricing, payments, idempotent orders | `mock-backend/src/http/routes/shop.routes.ts` |
+| Payment provider interface | `src/features/shop/payments/payment-gateway.ts` |
+| Order events and deep links | `src/features/shop/notifications/`, `src/core/notifications/` |
+| A section that hides itself on failure | `RelatedProducts` in `src/features/shop/catalog/screens/product-screen.tsx` |
+| Per-screen error boundary | `src/core/ui/route-error.tsx` |
+| Server side: pricing, mock payments, orders | `mock-backend/src/http/routes/shop.routes.ts` |
 
-## References
-
-- G. DeCandia et al., [*Dynamo: Amazon's Highly Available Key-value Store*](https://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf), SOSP 2007.
-- J. Gray, [*A Conversation with Werner Vogels*](https://queue.acm.org/detail.cfm?id=1142065), ACM Queue, 2006.
-- Amazon Builders' Library:
-  - [*Timeouts, retries, and backoff with jitter*](https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/)
-  - [*Making retries safe with idempotent APIs*](https://aws.amazon.com/builders-library/making-retries-safe-with-idempotent-APIs/)
-  - [*Using load shedding to avoid overload*](https://aws.amazon.com/builders-library/using-load-shedding-to-avoid-overload/)
-  - [*Workload isolation using shuffle-sharding*](https://aws.amazon.com/builders-library/workload-isolation-using-shuffle-sharding/)
-- AWS Well-Architected, *Reducing the Scope of Impact with Cell-Based Architecture*.

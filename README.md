@@ -38,7 +38,7 @@ Demo accounts: `admin@acme.test / Admin@123`, `hr@acme.test / Hr@12345`, `employ
 | **RN 2** 50,000-Product FlatList | `rn-app` → Products | Infinite scroll, pull to refresh, search; paginated and all-in-memory modes |
 | **RN 3** OTP Component | `rn-app/packages/otp-input` | Publish-ready package: auto-advance, backspace, paste/autofill, validation, unit tests |
 | **RN 4** Background Location | `rn-app` → Field Tracker | Background task, ~30 s sampling, SQLite route history, idempotent batch upload |
-| **RN 5** E-commerce Architecture | `rn-app` → E-commerce Store; [summary below](#e-commerce-architecture-rn-5) | Amazon-style service boundaries, API layer, state, errors, scaling to 1M users, plus a working reference store |
+| **RN 5** E-commerce Architecture | `rn-app` → E-commerce Store; [summary below](#e-commerce-architecture-rn-5) | Service boundaries, API layer, state, errors, scaling to 1M users, plus a working reference store |
 | **RN 6** Chat | `rn-app` → Team Chat | Receipts, typing, offline queue, ordering, 1,000-message burst via batching |
 | **System Design** | [`docs/system-design.md`](docs/system-design.md) | Architecture, JWT, RBAC, offline, push, caching, WebSockets, CI/CD — plus a working slice |
 
@@ -101,68 +101,62 @@ cd rn-app && npm install && npx expo run:ios
 
 ## E-commerce architecture (RN 5)
 
-The design for the six required modules (Authentication, Product Catalog, Cart, Checkout, Payments,
-Notifications), with the client side implemented as a working store in `rn-app/src/features/shop`.
-Full write-up: [`rn-app/docs/architecture.md`](rn-app/docs/architecture.md).
+RN question 5 asks for an e-commerce app architecture (auth, catalog, cart, checkout, payments and
+notifications), why it was chosen, and how it scales to a million users. The full write-up is in
+[`rn-app/docs/architecture.md`](rn-app/docs/architecture.md). I also built the client side as a
+working store, which you can open from the app's home screen as **E-commerce Store**.
 
-### Why this architecture
+### Why this design
 
-It follows the principles Amazon has published about its own commerce platform, at a scale that
-suits one million users:
+A million users is big enough that the design has to scale, but not so big that it needs hundreds
+of microservices. I built it around a few decisions:
 
-| Amazon practice | Applied here |
-| --- | --- |
-| Small teams own services and talk only through APIs ("you build it, you run it") | One backend service per domain, each owning its data; one app feature module per domain with a public `index.ts` |
-| The shopping cart is "always writeable" (Dynamo paper) | The cart lives on the device: adding always works, even offline. The server re-prices it; client prices are never trusted |
-| Strong consistency where money moves | The server calculates every total and the payment amount; the order service re-checks it before accepting the order |
-| Timeouts, retries and back-off with jitter | One HTTP client with timeouts; reads retry transient errors (network, 429, 5xx) with jittered back-off |
-| Retries made safe with idempotent APIs | Each checkout sends one `Idempotency-Key`: a retry returns the same order and never charges twice |
-| Pages built from independent parts | Optional sections ("More in this category") hide themselves on failure; each screen has its own error boundary |
-| Event-driven work behind the order | The order service publishes `OrderPlaced` for notifications and other consumers; in the app, modules react to events (checkout emits `orderPlaced`, the cart clears itself) |
+- Each business area (catalogue, cart, pricing, orders, payments, notifications) is its own service
+  with its own data, owned by one team. The app is organised the same way, one feature module per
+  area, so a team owns its slice end to end.
+- The cart can always be written to. Refusing "add to cart" loses a sale, while a slightly stale
+  cart costs nothing. So the cart lives on the phone and works
+  offline, and the server re-checks prices and stock before checkout.
+- Money is handled strictly. The server calculates every total, the app never sends an amount, and
+  every order carries an idempotency key, so a retry after a timeout can't charge anyone twice.
+- Failures are contained. Only reads are retried, with randomised back-off, and optional parts of a
+  page (like "More in this category") disappear instead of breaking it.
+- Work that doesn't need to happen during checkout, such as emails, push notifications and inventory
+  updates, runs off an `OrderPlaced` event instead of slowing the order down.
 
-Amazon runs very many services; this design keeps the same boundaries with **six services**, so any
-of them can be split later without changing the app.
+Seven services is plenty at this size. Because the boundaries are in the right places, any of them
+can be split further later without changing the app.
 
-### System overview
+### How it fits together
 
 ```
-React Native app ──► CDN (images, cacheable catalogue) ──► API gateway / BFF (auth, rate limits)
-                                                               │
-      ┌──────────────┬───────────────┬───────────────┬─────────┴───────┬──────────────┐
-  Identity      Catalogue +       Cart           Pricing          Checkout /        Payment
-               search index    (DynamoDB)                     Order (Postgres)   (provider SDK
-                                                                     │            + webhooks)
-                                             event bus: OrderPlaced ─┴─► Notifications (push, WebSocket),
-                                                                         inventory, email, analytics
+React Native app
+  → CDN (images, cached catalogue)
+  → API gateway (auth, rate limits)
+      → identity · catalogue · cart · pricing · orders · payments · notifications
+                                              orders ──► event bus ──► notifications, email, inventory
 ```
 
-### Mobile app structure
+In the app, routes are thin and call into feature modules. Server data goes through RTK Query with
+a single HTTP client that handles timeouts and errors. The cart is a persisted Redux slice, and
+checkout is a small state machine (address → delivery → payment → done) with unit tests.
 
-| Concern | Approach |
-| --- | --- |
-| Folder structure | `app/` thin routes → `features/<module>/` (api, state, components, screens, `index.ts`) → `core/` shared infrastructure (HTTP client, store, UI) |
-| API layer | RTK Query endpoints on a shared base query: caching per endpoint, tag invalidation, refetch on reconnect |
-| State management | Server data in RTK Query; the cart in a persisted Redux slice; checkout as an explicit state machine (`address → shipping → payment → confirming → done / failed`) with unit tests |
-| Error handling | Typed errors mapped to one set of user-facing messages; declined payments and timeouts handled without double charges |
-| Payments | The provider sits behind a `PaymentGateway` interface; card data never touches the app or our servers |
+### Scaling to a million users
 
-### Scaling to 1 million users
+A million monthly users is roughly 100k–200k a day. That works out to around 1,000 requests a second
+at a normal peak and maybe 10,000 during a big sale. Most of that (about 90%) is people browsing the
+catalogue, which caches well. So the plan is mostly about serving reads cheaply and keeping checkout
+safe under a spike:
 
-| Estimate | Figure |
-| --- | --- |
-| Daily active users | 100k–200k |
-| Normal peak | ~1,000 requests/s |
-| Sale-day peak | ~10,000 requests/s |
-| Share of traffic that is cacheable catalogue reads | ~90% |
+- The app avoids requests it doesn't need: it caches the catalogue, paginates, sizes images to the
+  screen, and spreads out its retries.
+- A CDN answers most catalogue reads before they reach a server, and the gateway rate-limits early.
+- Services are stateless, so each one scales on its own. The catalogue scales for browsing, orders
+  and payments for sale days.
+- Carts go in DynamoDB, orders in Postgres with read replicas, and the catalogue in OpenSearch with
+  Redis in front.
+- Emails, push notifications and inventory updates go through queues, so a sale-day spike turns into
+  a backlog that drains over a few minutes rather than an outage.
 
-- **Client:** cached catalogue, pagination, correctly sized images, jittered retries and reconnects,
-  remote feature flags and over-the-air updates with staged rollouts.
-- **Edge and services:** a CDN absorbs most reads; stateless services scale horizontally and
-  independently; timeouts, circuit breakers and bulkheads keep optional features from affecting
-  checkout.
-- **Data:** a search index plus Redis for the catalogue, DynamoDB for carts, Postgres with read
-  replicas for orders.
-- **Asynchronous work:** email, push, inventory and analytics go through queues, so a sale-day spike
-  becomes a backlog that drains rather than an outage.
-- **Beyond 1M:** cell-based architecture and shuffle-sharding to limit the impact of any failure,
-  then multiple regions.
+Past a million users, the next step would be a cell-based setup: several copies of the stack,
+each serving a slice of customers, so one bad deployment only affects a fraction of them.

@@ -91,7 +91,7 @@ xcrun simctl location booted start --speed=20 9.9312,76.2673 9.9500,76.2900 9.98
 ```
 
 **Q5 — E-commerce architecture.** [`docs/architecture.md`](docs/architecture.md) is the design:
-Amazon-style domain services behind a gateway, why it was chosen, and how it scales to one million
+domain services behind a gateway, why I chose it, and how it scales to one million
 users. `src/features/shop` is a working reference store built on it:
 - **Cart:** device-owned and always writable, even offline; prices are always re-checked by the server.
 - **Checkout:** an explicit state machine, with unit tests.
