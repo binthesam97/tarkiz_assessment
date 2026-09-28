@@ -32,7 +32,7 @@ Demo accounts: `admin@acme.test / Admin@123`, `hr@acme.test / Hr@12345`, `employ
 | **Angular 2** NgRx State Management | `angular-app` → `/products` | Entity state, functional effects, loading/error states, optimistic CRUD with rollback |
 | **Angular 3** Real-Time Notifications | `angular-app` → `/notifications` | WebSocket with back-off reconnection and backfill, categories, read state, localStorage persistence |
 | **Angular 4** RxJS Autocomplete | `angular-app` → `/autocomplete` | debounce, `switchMap` cancellation, `shareReplay` LRU cache, `retry` ×2 with back-off, live request log |
-| **Angular 5** 10,000 Records | `angular-app` → `/performance` | OnPush, virtual scrolling, trackBy, memoisation, `@defer`, with live metrics — [write-up](angular-app/docs/performance.md) |
+| **Angular 5** 10,000 Records | `angular-app` → `/performance` | OnPush, virtual scrolling, trackBy, memoisation and lazy loading, with live metrics — [write-up](angular-app/docs/performance.md) |
 | **Angular 6** Micro Frontends | `mfe/` | Native Federation, independent deploys, shared components, shared auth — [README](mfe/README.md) |
 | **RN 1** Offline-First Directory | `rn-app` → Employee Directory | SQLite + outbox, delta sync, version conflicts, NetInfo-triggered sync |
 | **RN 2** 50,000-Product FlatList | `rn-app` → Products | Infinite scroll, pull to refresh, search; paginated and all-in-memory modes |

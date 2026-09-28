@@ -37,13 +37,3 @@
 <div #tableHost>
   <app-optimized-table [records]="records()" [query]="query()" />
 </div>
-
-<section class="card summary">
-  @defer (on viewport; prefetch on idle) {
-    <app-department-summary [records]="records()" />
-  } @placeholder {
-    <p class="placeholder">Department summary loads when scrolled into view.</p>
-  } @loading (minimum 300ms) {
-    <p class="placeholder">Loading summary…</p>
-  }
-</section>

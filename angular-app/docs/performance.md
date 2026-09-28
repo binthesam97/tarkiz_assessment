@@ -33,7 +33,7 @@ change detection, which is representative of timers, WebSocket messages or any o
 | **trackBy / track** | `track $index` ties DOM nodes to positions, so a re-sort destroys and re-creates rows. | `trackBy: trackById` lets Angular move and reuse existing row views. `templateCacheSize` recycles row templates while scrolling. |
 | **Memoisation** | Filtering/sorting run in a template method, i.e. on *every* check. Formatting runs through method calls and builds a new `Intl` formatter per call. | `computed()` signals memoise filtering and sorting separately, so changing only the sort does not re-run the search. Pure pipes (`initials`, `inr`, `shortDate`) re-run only when their input changes. `Intl` formatters are created once per module. |
 | **Debounced search** | Filtering 10k rows on every keystroke. | Search input is debounced by 250 ms before it reaches the `computed` pipeline. |
-| **Lazy loading** | Everything ships in the initial bundle. | Each challenge is a lazily loaded route (`loadChildren`). Within this page, the department summary uses `@defer (on viewport; prefetch on idle)`, so its code is a separate chunk fetched only when needed. |
+| **Lazy loading** | Everything ships in the initial bundle. | Each challenge is a lazily loaded route (`loadChildren`), so this page's table, pipes and CDK scrolling code are a separate chunk, fetched only when the route is opened. |
 
 ## Further options for larger datasets
 

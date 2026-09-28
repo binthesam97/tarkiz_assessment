@@ -2,7 +2,6 @@ import { ChangeDetectionStrategy, Component, ElementRef, Injector, afterNextRend
 import { toObservable, toSignal } from '@angular/core/rxjs-interop';
 import { debounceTime } from 'rxjs';
 import { generateRecords } from './data/employee-record';
-import { DepartmentSummaryComponent } from './shared/department-summary.component';
 import { RecordQuery, SortKey } from './shared/record-query';
 import { OptimizedTableComponent } from './table/optimized-table.component';
 
@@ -11,7 +10,7 @@ const SEARCH_DEBOUNCE_MS = 250;
 
 @Component({
   selector: 'app-performance-page',
-  imports: [OptimizedTableComponent, DepartmentSummaryComponent],
+  imports: [OptimizedTableComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './performance-page.component.html',
   styleUrl: './performance-page.component.scss',
