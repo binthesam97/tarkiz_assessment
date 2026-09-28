@@ -1,0 +1,48 @@
+<div class="combobox" (focusout)="open.set(false)">
+  <input
+    class="input"
+    type="text"
+    role="combobox"
+    autocomplete="off"
+    aria-autocomplete="list"
+    [attr.aria-expanded]="open()"
+    [attr.aria-controls]="listboxId"
+    [attr.aria-activedescendant]="activeIndex() >= 0 ? listboxId + '-' + activeIndex() : null"
+    [placeholder]="placeholder()"
+    [formControl]="query"
+    (focus)="open.set(query.value.trim().length >= minLength())"
+    (keydown)="onKeydown($event)"
+  />
+
+  @if (state().status === 'loading') {
+    <span class="spinner" aria-label="Loading"></span>
+  }
+
+  @if (open()) {
+    <ul class="panel" role="listbox" [id]="listboxId">
+      @switch (state().status) {
+        @case ('loading') {
+          <li class="status">Searching…</li>
+        }
+        @case ('error') {
+          <li class="status error">Could not load suggestions. Keep typing to try again.</li>
+        }
+        @case ('success') {
+          @for (option of results(); track option; let i = $index) {
+            <li
+              role="option"
+              [id]="listboxId + '-' + i"
+              [class.active]="i === activeIndex()"
+              [attr.aria-selected]="i === activeIndex()"
+              (mousedown)="$event.preventDefault(); choose(option)"
+            >
+              {{ option }}
+            </li>
+          } @empty {
+            <li class="status">No matches</li>
+          }
+        }
+      }
+    </ul>
+  }
+</div>

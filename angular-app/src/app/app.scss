@@ -1,0 +1,111 @@
+.shell {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  min-height: 100vh;
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  padding: 1.5rem 1rem;
+  background: var(--surface-muted);
+  border-right: 1px solid var(--border);
+
+  nav {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  nav a {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: var(--radius);
+    color: var(--text-muted);
+    text-decoration: none;
+
+    &:hover {
+      background: var(--surface);
+    }
+
+    &.active {
+      background: var(--surface);
+      color: var(--text);
+      font-weight: 600;
+      box-shadow: var(--shadow-sm);
+    }
+  }
+}
+
+.brand {
+  font-weight: 700;
+  font-size: 1.125rem;
+  color: var(--text);
+  text-decoration: none;
+  padding: 0 0.75rem;
+}
+
+.index {
+  display: inline-grid;
+  place-items: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+
+.group-label {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  padding: 0.5rem 0.75rem;
+  color: var(--text-muted);
+}
+
+.sidebar nav a.sub {
+  padding-left: 2.875rem;
+  font-size: 0.875rem;
+}
+
+.external-mark {
+  margin-left: auto;
+  color: var(--text-muted);
+}
+
+.unread {
+  margin-left: auto;
+  background: var(--danger);
+  color: #fff;
+}
+
+.content {
+  padding: 2rem 2.5rem;
+  min-width: 0;
+}
+
+@media (max-width: 768px) {
+  .shell {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .content {
+    padding: 1.25rem 1rem;
+  }
+}

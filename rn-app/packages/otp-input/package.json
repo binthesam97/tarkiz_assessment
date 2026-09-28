@@ -1,0 +1,43 @@
+{
+  "name": "@tarkiz/react-native-otp-input",
+  "version": "1.0.0",
+  "description": "Accessible, reusable one-time-password input for React Native with paste, SMS autofill and validation support.",
+  "license": "MIT",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "react-native": "src/index.ts",
+  "source": "src/index.ts",
+  "files": [
+    "lib",
+    "src",
+    "!src/__tests__"
+  ],
+  "sideEffects": false,
+  "keywords": [
+    "react-native",
+    "otp",
+    "one-time-password",
+    "pin",
+    "verification-code"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --import tsx 'src/__tests__/*.test.ts'",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
+  },
+  "peerDependencies": {
+    "react": ">=18",
+    "react-native": ">=0.72"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.2",
+    "react": "19.2.3",
+    "react-native": "0.86.3",
+    "tsx": "^4.23.0",
+    "typescript": "~6.0.3"
+  }
+}

@@ -1,0 +1,18 @@
+:{$PORT:8080} {
+	root * /srv
+	encode gzip
+
+	# Runtime configuration must never be cached; hashed bundles can be cached forever.
+	@runtime path /config.js /federation.manifest.json /remoteEntry.json /index.html
+	header @runtime Cache-Control "no-store"
+	@hashed path_regexp -[A-Za-z0-9_]{8}\.(js|css)$
+	header @hashed Cache-Control "public, max-age=31536000, immutable"
+
+	# Public static files; a micro-frontend remote must be loadable by a host on another origin.
+	header Access-Control-Allow-Origin *
+	header X-Content-Type-Options nosniff
+
+	# Single-page app: unknown paths fall back to index.html for client-side routing.
+	try_files {path} /index.html
+	file_server
+}

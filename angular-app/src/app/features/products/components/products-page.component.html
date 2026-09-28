@@ -1,0 +1,53 @@
+<h1>NgRx Product Management</h1>
+<div class="layout">
+  <section class="main">
+    <div class="toolbar">
+      <button type="button" class="btn primary" (click)="editing.set(null)">Add product</button>
+      <button type="button" class="btn" [disabled]="loadStatus() === 'loading'" (click)="reload()">
+        {{ loadStatus() === 'loading' ? 'Loading…' : 'Reload' }}
+      </button>
+      <span class="summary">{{ total() }} products · Inventory value {{ inventoryValue() | currency: 'INR' }}</span>
+    </div>
+
+    @if (mutationError(); as error) {
+      <div class="alert error dismissible" role="alert">
+        <span>{{ error }} The change has been rolled back.</span>
+        <button type="button" class="btn small" (click)="dismissError()">Dismiss</button>
+      </div>
+    }
+
+    <div class="card table-card">
+      @switch (loadStatus()) {
+        @case ('error') {
+          <div class="state">
+            <p>Failed to load products: {{ loadError() }}</p>
+            <button type="button" class="btn primary" (click)="reload()">Try again</button>
+          </div>
+        }
+        @default {
+          @if (loadStatus() === 'loading' && total() === 0) {
+            <div class="skeleton" aria-busy="true" aria-label="Loading products">
+              @for (row of [1, 2, 3, 4, 5, 6]; track row) {
+                <div class="skeleton-row"></div>
+              }
+            </div>
+          } @else {
+            <app-product-table
+              [products]="products()"
+              [pending]="pending()"
+              (edit)="editing.set($event)"
+              (remove)="remove($event)"
+              (stockChange)="adjustStock($event)"
+            />
+          }
+        }
+      }
+    </div>
+  </section>
+
+  <aside>
+    <app-network-controls [showFailMutations]="true" [showFailureRate]="false" />
+  </aside>
+</div>
+
+<app-product-form-dialog [product]="editing()" (saved)="save($event)" (closed)="editing.set(undefined)" />

@@ -1,0 +1,31 @@
+# Dependencies and build output
+node_modules/
+dist/
+.angular/
+.expo/
+coverage/
+
+# Native build output (Expo prebuild regenerates the rest)
+rn-app/android/.gradle/
+rn-app/android/.kotlin/
+rn-app/android/app/build/
+rn-app/android/build/
+rn-app/ios/build/
+rn-app/ios/Pods/
+
+# Distributed through GitHub Releases, not the repository
+*.apk
+*.aab
+*.ipa
+
+# Local tooling and editors
+.claude/
+.idea/
+.vscode/
+*.log
+.env
+.env.*
+.DS_Store
+
+# The assessment brief is the client's document
+*.docx

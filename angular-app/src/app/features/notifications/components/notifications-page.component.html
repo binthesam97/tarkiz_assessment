@@ -1,0 +1,58 @@
+<h1>Real-Time Notifications</h1>
+<div class="toolbar">
+  <span class="status" [attr.data-status]="socket.status()">
+    <span class="indicator"></span>
+    @switch (socket.status()) {
+      @case ('connected') { Live }
+      @case ('connecting') { Connecting… }
+      @case ('reconnecting') { Reconnecting (attempt {{ socket.reconnectAttempt() }})… }
+      @case ('offline') { Offline }
+    }
+  </span>
+  <span class="unread">{{ unreadCount() }} unread</span>
+
+  <div class="demo">
+    <select class="input" aria-label="Test notification category" [value]="testCategory()" (change)="testCategory.set($any($event.target).value)">
+      @for (category of categories; track category) {
+        <option [value]="category">{{ category }}</option>
+      }
+    </select>
+    <button type="button" class="btn" (click)="sendTestNotification()">Send test</button>
+    <button type="button" class="btn" (click)="dropConnection()">Drop connection</button>
+  </div>
+</div>
+
+<div class="card panel">
+  <div class="tabs" role="tablist" aria-label="Filter by category">
+    <button type="button" role="tab" [attr.aria-selected]="filter() === 'ALL'" (click)="filter.set('ALL')">
+      All <span class="count">{{ unreadCount() }}</span>
+    </button>
+    @for (category of categories; track category) {
+      <button type="button" role="tab" [attr.aria-selected]="filter() === category" (click)="filter.set(category)">
+        {{ category.charAt(0) + category.slice(1).toLowerCase() }} <span class="count">{{ counts()[category].unread }}</span>
+      </button>
+    }
+  </div>
+
+  <div class="list-actions">
+    <label>
+      <input type="checkbox" [checked]="unreadOnly()" (change)="unreadOnly.set($any($event.target).checked)" />
+      Unread only
+    </label>
+    <button type="button" class="btn small" (click)="markAllAsRead()">Mark all as read</button>
+    <button type="button" class="btn small danger" (click)="store.clear()">Clear all</button>
+  </div>
+
+  <div class="list" role="tabpanel" aria-live="polite">
+    @for (notification of visible(); track notification.id) {
+      <app-notification-item
+        [notification]="notification"
+        [now]="now()"
+        (markRead)="store.markAsRead($event)"
+        (remove)="store.remove($event)"
+      />
+    } @empty {
+      <p class="empty">No notifications to show.</p>
+    }
+  </div>
+</div>

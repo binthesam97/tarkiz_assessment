@@ -1,0 +1,61 @@
+.combobox {
+  position: relative;
+}
+
+.spinner {
+  position: absolute;
+  top: 50%;
+  right: 0.75rem;
+  width: 1rem;
+  height: 1rem;
+  margin-top: -0.5rem;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.panel {
+  position: absolute;
+  z-index: 10;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 280px;
+  margin: 0;
+  padding: 0.25rem;
+  overflow-y: auto;
+  list-style: none;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgb(16 24 40 / 0.12);
+
+  li {
+    padding: 0.5rem 0.75rem;
+    border-radius: 6px;
+  }
+
+  li[role='option'] {
+    cursor: pointer;
+
+    &:hover,
+    &.active {
+      background: var(--accent-soft);
+    }
+  }
+
+  .status {
+    color: var(--text-muted);
+  }
+
+  .error {
+    color: var(--danger);
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

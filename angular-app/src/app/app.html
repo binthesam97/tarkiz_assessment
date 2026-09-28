@@ -1,0 +1,27 @@
+<div class="shell">
+  <aside class="sidebar">
+    <a class="brand" routerLink="/">Tarkiz Angular Assessment</a>
+    <nav>
+      @for (challenge of challenges; track challenge.path; let i = $index) {
+        <a [routerLink]="challenge.path" routerLinkActive="active">
+          <span class="index">{{ i + 1 }}</span>{{ challenge.title }}
+          @if (challenge.path === 'notifications' && unreadNotifications()) {
+            <span class="badge unread" [attr.aria-label]="unreadNotifications() + ' unread notifications'">{{ unreadNotifications() }}</span>
+          }
+        </a>
+      }
+      <div class="group">
+        <span class="group-label"><span class="index">6</span>Micro Frontends</span>
+        <a class="sub" [href]="hrPortalUrl" target="_blank" rel="noopener">
+          HR portal (host)<span class="external-mark" aria-hidden="true">↗</span>
+        </a>
+        <a class="sub" [href]="employeeAppUrl" target="_blank" rel="noopener">
+          Employee admin (remote)<span class="external-mark" aria-hidden="true">↗</span>
+        </a>
+      </div>
+    </nav>
+  </aside>
+  <main class="content">
+    <router-outlet />
+  </main>
+</div>

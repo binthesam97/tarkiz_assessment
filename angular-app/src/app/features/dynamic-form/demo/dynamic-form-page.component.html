@@ -1,0 +1,33 @@
+<h1>Dynamic Form Builder</h1>
+<div class="layout">
+  <section class="card">
+    <div class="toolbar">
+      <select class="input sample-select" [value]="selectedSampleId()" (change)="selectSample($any($event.target).value)">
+        @for (sample of samples; track sample.id) {
+          <option [value]="sample.id">{{ sample.label }}</option>
+        }
+      </select>
+      <button type="button" class="btn primary" (click)="apply()">Apply JSON</button>
+    </div>
+    <textarea
+      class="input editor"
+      spellcheck="false"
+      aria-label="Form configuration JSON"
+      [value]="configText()"
+      (input)="configText.set($any($event.target).value)"
+    ></textarea>
+    @if (parseError(); as error) {
+      <p class="alert error">{{ error }}</p>
+    }
+  </section>
+
+  <section class="card">
+    <h2>Rendered form</h2>
+    <df-dynamic-form [config]="config()" (submitted)="submittedValue.set($event)" />
+
+    @if (submittedValue(); as value) {
+      <h2 class="result-heading">Submitted value</h2>
+      <pre class="result">{{ value | json }}</pre>
+    }
+  </section>
+</div>

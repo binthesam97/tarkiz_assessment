@@ -1,0 +1,49 @@
+<h1>Rendering 10,000 Records</h1>
+<div class="toolbar">
+  <input
+    class="input search"
+    type="search"
+    placeholder="Search name, email, department…"
+    aria-label="Search records"
+    [value]="searchInput()"
+    (input)="searchInput.set($any($event.target).value)"
+  />
+  <select class="input sort" aria-label="Sort by" [value]="sort()" (change)="setSort($any($event.target).value)">
+    <option value="name">Name</option>
+    <option value="salary">Salary (high → low)</option>
+    <option value="rating">Rating (high → low)</option>
+    <option value="joinedAt">Joined (newest)</option>
+  </select>
+</div>
+
+<dl class="metrics" aria-live="polite">
+  <div>
+    <dt>Last render</dt>
+    <dd>{{ renderMs() ?? '—' }} <small>ms</small></dd>
+  </div>
+  <div>
+    <dt>DOM nodes in table</dt>
+    <dd>{{ domNodes()?.toLocaleString() ?? '—' }}</dd>
+  </div>
+  <div>
+    <dt>Records</dt>
+    <dd>{{ recordCount.toLocaleString() }}</dd>
+  </div>
+</dl>
+
+<div class="table-header" aria-hidden="true">
+  <span></span><span>Name</span><span>Department</span><span>Location</span><span class="numeric">Salary</span><span class="numeric">Rating</span><span>Joined</span>
+</div>
+<div #tableHost>
+  <app-optimized-table [records]="records()" [query]="query()" />
+</div>
+
+<section class="card summary">
+  @defer (on viewport; prefetch on idle) {
+    <app-department-summary [records]="records()" />
+  } @placeholder {
+    <p class="placeholder">Department summary loads when scrolled into view.</p>
+  } @loading (minimum 300ms) {
+    <p class="placeholder">Loading summary…</p>
+  }
+</section>
